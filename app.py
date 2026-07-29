@@ -12,7 +12,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# --- 2. CHARGEMENT DU MODÈLE (CACHÉ POUR LES PERFORMANCES) ---
+# --- 2. CHARGEMENT DU MODÈLE ---
 @st.cache_resource
 def load_recommender():
     path = 'model_assets/recommender_assets.pkl'
@@ -28,12 +28,19 @@ try:
     indices = artifacts['indices']
     tfidf_matrix = artifacts['tfidf_matrix']
     
-    # Pre-calcul des indices originaux pour l'alignement TF-IDF
-    filtered_orig_indices = [indices[t] for t in filtered_movies['title']]
+    # Fonction pour extraire un index unique même si le titre a des doublons
+    def get_single_idx(title):
+        val = indices[title]
+        if isinstance(val, (pd.Series, np.ndarray, list)):
+            return int(val.iloc[0] if hasattr(val, 'iloc') else val[0])
+        return int(val)
+
+    # Alignement sécurisé des indices originaux
+    filtered_orig_indices = [get_single_idx(t) for t in filtered_movies['title']]
     model_loaded = True
 except Exception as e:
     model_loaded = False
-    st.error(f"❌ Impossible de charger 'model_assets/recommender_assets.pkl'. Vérifie le chemin du fichier ! Erreur : {e}")
+    st.error(f"❌ Impossible de charger le modèle. Vérifie le chemin du fichier ! Erreur : {e}")
 
 # --- 3. FONCTION DE RECOMMANDATION HYBRIDE ---
 def recommend_hybrid(title, top_n=5, alpha=0.3):
@@ -43,7 +50,9 @@ def recommend_hybrid(title, top_n=5, alpha=0.3):
     
     movie_id = match.iloc[0]['movieId']
     idx_filtered = movie_to_idx[movie_id]
-    idx_original = indices[title]
+    
+    # Sécurisation contre les doublons de titres
+    idx_original = get_single_idx(title)
     
     # 1. Content-Based (Genres TF-IDF)
     sim_content_all = linear_kernel(tfidf_matrix[idx_original], tfidf_matrix).flatten()
@@ -74,13 +83,10 @@ st.caption("Système de Recommandation Hybride (Content-Based TF-IDF + SVD Matri
 st.divider()
 
 if model_loaded:
-    # Barre latérale pour les contrôles
     st.sidebar.header("⚙️ Paramètres")
     
-    # Sélection du film
     movie_list = sorted(filtered_movies['title'].tolist())
     
-    # Film par défaut (Toy Story si présent)
     default_index = movie_list.index('Toy Story (1995)') if 'Toy Story (1995)' in movie_list else 0
     selected_movie = st.sidebar.selectbox(
         "🔎 Choisis un film que tu as aimé :",
@@ -88,10 +94,8 @@ if model_loaded:
         index=default_index
     )
     
-    # Nombre de recommandations
     top_n = st.sidebar.slider("Nombre de recommandations :", min_value=3, max_value=15, value=5)
     
-    # Réglage du poids d'hybridation alpha
     st.sidebar.markdown("---")
     st.sidebar.subheader("⚖️ Réglage de l'algorithme")
     alpha = st.sidebar.slider(
@@ -104,7 +108,6 @@ if model_loaded:
     )
     st.sidebar.caption(f"📊 **Config actuelle :** {int(alpha*100)}% Genres / {int((1-alpha)*100)}% SVD")
 
-    # Zone principale d'affichage
     col1, col2 = st.columns([1, 2])
     
     with col1:
@@ -118,7 +121,6 @@ if model_loaded:
         recommendations = recommend_hybrid(selected_movie, top_n=top_n, alpha=alpha)
         
         if recommendations is not None:
-            # Affichage sous forme de cartes élégantes
             for idx, row in recommendations.reset_index().iterrows():
                 with st.container():
                     c_rank, c_details, c_score = st.columns([0.5, 3, 1])
